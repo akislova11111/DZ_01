@@ -231,4 +231,160 @@
 
 На следующей диаграмме изображена схема контейнеров целевой архитектуры системы:
 
-<img width="865" height="669" alt="image" src="https://github.com/user-attachments/assets/e87d79aa-7c37-48a8-a6a9-43a7a239b629" />
+<img width="1387" height="937" alt="image" src="https://github.com/user-attachments/assets/40ed205f-5406-4748-86bc-63ed578e5605" />
+
+### Диаграмма компонентов
+
+Диаграмма компонентов увеличивает масштаб отдельного контейнера, показывая компоненты внутри него. 
+На следующих диаграммах показанные выше контейнеры/функции более подробно разбиваются на компоненты, которые представляют собой отдельно развертываемые микросервисы.
+
+Диаграмма компонентов составлена для пяти ключевых микросервисов из кейса:
+
+* Сервис меню
+* Сервис программы лояльности
+* Сервис заказов
+* Сервис оплаты
+* Сервис доставки
+
+На этом уровне мы показываем:
+- Основные компоненты внутри каждого сервиса (классы, модули, контроллеры, репозитории и т.п.);
+- Внутренние зависимости между ними;
+- Внешние взаимодействия с другими сервисами и базами данных.
+
+```mermaid
+%%{init: {'theme': 'default', 'themeVariables': { 'fontSize': '12px' }}}%%
+graph TD
+  subgraph MS ["Сервис Меню"]
+    MC[MenuController]
+    MM[MenuModel]
+    MR[MenuRepository]
+    FRC[FranchiseConfig]
+    
+    MC --> MM
+    MC --> MR
+    MC --> FRC
+    MR --> M_DB[(Данные о локальном меню)]
+  end
+
+  subgraph LPS ["Сервис программы лояльности"]
+    LPC[LoyaltyController]
+    LP[PointsEngine]
+    LEV[EventProcessor]
+    LR[LoyaltyRepository]
+    
+    LPC --> LP
+    LPC --> LR
+    LEV --> LP
+    LEV --> LR
+    LR --> L_DB[(Промоушн DB)]
+  end
+
+  subgraph OS ["Сервис заказов"]
+    OC[OrderController]
+    OM[OrderOrchestrator]
+    OVAL[OrderValidator]
+    OR[OrderRepository]
+    OEV[OrderEventPublisher]
+    
+    OC --> OM
+    OM --> OVAL
+    OM --> OR
+    OM --> OEV
+    OR --> O_DB[(Данные о локальных заказах)]
+  end
+
+  subgraph PS ["Сервис оплаты"]
+    PC[PaymentController]
+    PGW[PaymentGatewayAdapter]
+    PVAL[PaymentValidator]
+    PR[PaymentRepository]
+    PINV[InvoiceGenerator]
+    
+    PC --> PGW
+    PC --> PVAL
+    PC --> PR
+    PC --> PINV
+    PR --> P_DB[(Данные о локальных заказах)]
+  end
+
+  subgraph DS ["Сервис доставки"]
+    DC[DeliveryController]
+    DSM[DeliveryScheduler]
+    DRV[DriverMatcher]
+    DMA[MapAdapterClient]
+    DR[DeliveryRepository]
+    
+    DC --> DSM
+    DSM --> DRV
+    DSM --> DMA
+    DSM --> DR
+    DR --> D_DB[(Данные о локальных заказах)]
+    DR --> D_DB[(Данные о координатах)]
+  end
+
+  %% Внешние зависимости
+  OS -->|"Запрос меню"| MS
+  OS -->|"Начислить баллы"| LPS
+  OS -->|"Инициировать оплату"| PS
+  OS -->|"Создать доставку"| DS
+
+  PS -->|"Интеграция"| PG[Payment Gateways]
+  DS -->|"Маршруты"| MAPS[Map Services]
+  LPS -->|"Слушает события"| KAFKA[(Kafka / Event Bus)]
+  OS -->|"Публикует события"| KAFKA
+```
+
+#### Описание компонентов по сервисам
+
+1. Menu Service — управление меню и франшизами
+MenuController — REST/API для получения меню.
+MenuModel — доменные сущности: MenuItem, Category, AllergenInfo.
+MenuRepository — доступ к данным меню.
+БД: menu_db — хранит базовое и локальное меню, привязанное к franchise_id.
+Взаимодействует с Order Service при проверке доступности сэндвича. 
+
+2. Сервис программы лояльности —  проведение национальных и локальных акций, ведения бонусных счетов клиентов, начисление и списание бонусных баллов
+LoyaltyController — API для просмотра баллов, истории.
+PointsEngine — бизнес-логика: сколько баллов за заказ, как тратить.
+EventProcessor — подписывается на события (например, OrderCompleted).
+LoyaltyRepository — работа с аккаунтами лояльности.
+БД: loyalty_db — данные  об акциях,  спецпредложениях,  бонусных счетах  пользователей
+Использует асинхронную архитектуру: не вызывается напрямую, а реагирует на события. 
+
+3. Сервис заказов — ядро заказов
+OrderController —  REST/API для создания/просмотра заказов.
+OrderOrchestrator — координирует всё: валидация, оплата, доставка, лояльность.
+OrderValidator — проверяет: есть ли сэндвич в меню, открыт ли магазин.
+OrderRepository — сохраняет заказ.
+OrderEventPublisher — публикует события: OrderCreated, OrderCompleted.
+БД: orders_db — шардирована по региону/магазину.
+Центральный оркестратор: вызывает другие сервисы, но не зависит от их внутреннего устройства. 
+
+4. Сервис оплаты — обработка оплаты
+PaymentController —  REST/API: initiatePayment, confirmPayment.
+PaymentValidator — проверка суммы, валюты, поддержки метода.
+InvoiceGenerator — создаёт чек/квитанцию.
+БД: orders_db  — ссылки на заказы со статусами транзакций оплаты.
+
+5. Delivery Service — управление доставкой
+DeliveryController — REST/API: scheduleDelivery, trackStatus.
+DeliveryScheduler — логика назначения времени и курьера.
+DriverMatcher — находит ближайшего свободного водителя-курьера.
+MapAdapterClient — вызывает Google/Yandex/Maps для построения маршрута и расчета времени прибытия.
+DeliveryRepository — хранит заказы на доставку.
+БД: delivery_db — статусы, координаты, идентификаторы водителей-курьеров.
+Интеграция с картами через адаптер, чтобы легко добавлять новые регионы
+
+| Источник          | Назначение           | Тип                     | Цель                     |
+|-------------------|-----------------------|------------------------------|----------------------
+| Сервис заказов - Сервис Меню    | HTTP/rest      | Синхронный               |Получить актуальное меню и проверить доступность |
+| Сервис заказов - Cервис оплаты  | HTTP/rest      | Синхронный             |Заблокировать/подтвердить оплату  |
+| Сервис заказов - Сервис доставки  | Event       | Асинхронный   | Создать задачу доставки  |
+| Сервис заказов - Kafka       | Event   | Асинхронный       | Опубликовать OrderCompleted  |
+| Сервис лояльности - Kafka      | Event    | Асинхронный            | Получить OrderCompleted и начислить баллы  |
+
+
+
+
+
+
