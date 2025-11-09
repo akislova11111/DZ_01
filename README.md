@@ -383,8 +383,59 @@ DeliveryRepository — хранит заказы на доставку.
 | Сервис заказов - Kafka       | Event   | Асинхронный       | Опубликовать OrderCompleted  |
 | Сервис лояльности - Kafka      | Event    | Асинхронный            | Получить OrderCompleted и начислить баллы  |
 
+### Диаграмма развёртывания (Deployment Diagram)
 
+Диаграмма развертывания иллюстрирует:
+- Как системные контейнеры сопоставляются с инфраструктурой:
+- Физические или виртуальные узлы (серверы, кластеры, облака, устройства),
+- Как компоненты системы (контейнеры) размещаются на этих узлах,
+- Сетевые связи и зоны безопасности (например, публичная vs приватная сеть).
 
-
+```mermaid
+flowchart LR
+ subgraph User_Devices["Устройство пользователя"]
+        MobileApp["Android-приложение\iOS-приложение"]
+        WebBrowser["Web-приложение"]
+  end
+ subgraph Operational_Devices["Служебные устройства"]
+        AdminPortal["Web-приложение Админка"]
+        DriverApp["Мобильное приложение водителя-курьера"]
+  end
+ subgraph us_east_1["Region: Master"]
+        ALB1["Load Balancer"]
+        AppCluster1["Application Cluster- API Gateway- Microservices- Frontends"]
+        DB1["Primary Databases(Orders, Menu, Users)"]
+        Cache1["Redis Cache"]
+        EventBus1["Kafka Event Bus"]
+  end
+ subgraph eu_west_1["Region: slave"]
+        ALB2["Load Balancer"]
+        AppCluster2["Application Cluster (Geo-replicated)"]
+        DB2["Read Replica DB"]
+  end
+ subgraph Cloud["Cloud: AWS (Multi-Region)"]
+        Route53["Route 53 (DNS + Geo-routing)"]
+        WAF["Web Application Firewall"]
+        us_east_1
+        eu_west_1
+        S3["S3 Static Assets"]
+  end
+ subgraph External["Внешние системы"]
+        Maps["Map API (Google, Yandex)"]
+        Payments["Шлюз оплаты"]
+        Notifications["Сервис уведомлений"]
+  end
+    MobileApp --> Route53
+    WebBrowser --> Route53
+    AdminPortal --> Route53
+    DriverApp --> Route53
+    Route53 --> WAF & ALB2
+    WAF --> ALB1
+    ALB1 --> AppCluster1
+    AppCluster1 --> DB1 & Cache1 & EventBus1 & S3 & Maps & Payments & Notifications
+    ALB2 --> AppCluster2
+    DB1 -.-> DB2
+    Cloud --> n1["Untitled Node"]
+```
 
 
